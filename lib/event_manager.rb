@@ -1,9 +1,25 @@
 require 'csv'
 require 'google/apis/civicinfo_v2'
 require 'erb'
+require 'pry-byebug'
+
+def open_csv
+  CSV.open(
+    'event_attendees.csv',
+    headers: true,
+    header_converters: :symbol
+  )
+end
 
 def clean_zipcode(zipcode)
   zipcode.to_s.rjust(5, '0')[0..4]
+end
+
+def clean_phone_numbers
+  csv = open_csv
+  csv.each do |row|
+    puts clean_phone_number(row[:homephone])
+  end
 end
 
 def clean_phone_number(number)
@@ -17,28 +33,48 @@ def clean_phone_number(number)
   end
 end
 
-def find_peak_registration_hours(contents)
-  registration_times = collect_registration_times(contents)
-  tally_collection(registration_times)
+def find_peak_registration_hours
+  csv = open_csv
+  registration_times = collect_registration_times(csv)
+  registration_hours = []
+  registration_times.each do |time|
+    registration_hours.push(strptime_to_hour(time))
+  end
+  registration_hours.tally
+end
+
+def find_peak_registration_days
+  csv = open_csv
+  registration_times = collect_registration_times(csv)
+  registration_days = []
+  registration_times.each do |time|
+    registration_days.push(strptime_to_day_of_week(time))
+  end
+  registration_days.tally
 end
 
 # Collect all registration times in an array
-def collect_registration_times(contents)
+def collect_registration_times(csv)
   registration_times = []
-  contents.each do |row|
-    registration_times.push(strptime_to_hour(row[1]))
+  csv.each do |row|
+    registration_times.push(row[:regdate])
   end
   registration_times
 end
 
-# Simplify all registration times to their hours.
+# Simplify all registration times to their hour.
 def strptime_to_hour(time)
-  DateTime.strptime(time, '%m/%d/%Y %k').hour
+  Time.strptime(time, '%m/%d/%Y %k').hour
 end
 
-def tally_collection(arr)
-  arr.tally
+# Simplify all registration times to their day of week.
+def strptime_to_day_of_week(time)
+  Time.strptime(time, '%m/%d/%Y %k').strftime('%a')
 end
+
+# def tally_collection(arr)
+#   arr.tally
+# end
 
 def legislators_by_zipcode(zip)
   civic_info = Google::Apis::CivicinfoV2::CivicInfoService.new
@@ -51,7 +87,8 @@ def legislators_by_zipcode(zip)
       roles: ['legislatorUpperBody', 'legislatorLowerBody']
     ).officials
   rescue
-    'You can find your representatives by visiting www.commoncause.org/take-action/find-elected-officials'
+    'You can find your representatives by visiting'\
+      ' www.commoncause.org/take-action/find-elected-officials'
   end
 end
 
@@ -60,23 +97,14 @@ def save_thank_you_letter(id, form_letter)
 
   filename = "output/thanks_#{id}.html"
 
-  File.open(filename, 'w') do |file|
-    file.puts form_letter
-  end
+  File.open(filename, 'w') { |file| file.puts form_letter }
 end
 
 puts 'EventManager initialized.'
 
-contents = CSV.open(
-  'event_attendees.csv',
-  headers: true,
-  header_converters: :symbol
-)
+erb_template = ERB.new File.read('form_letter.erb')
 
-template_letter = File.read('form_letter.erb')
-erb_template = ERB.new template_letter
-
-contents.each do |row|
+open_csv.each do |row|
   id = row[0]
   name = row[:first_name]
   zipcode = clean_zipcode(row[:zipcode])
@@ -84,9 +112,8 @@ contents.each do |row|
   form_letter = erb_template.result(binding)
 
   save_thank_you_letter(id, form_letter)
-
-  # phone_number = clean_phone_number(row[:homephone])
-  # p phone_number
 end
 
-p find_peak_registration_hours(contents)
+clean_phone_numbers
+puts "Peak hours: #{find_peak_registration_hours}"
+puts "Peak days: #{find_peak_registration_days}"
